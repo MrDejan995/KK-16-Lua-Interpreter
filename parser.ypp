@@ -1,0 +1,173 @@
+%{
+#include <iostream>
+#include <string>
+#include <cstdlib>
+#include <map>
+#include <vector>
+#include <cstring>
+
+#include "izraz.hpp"
+#include "naredba.hpp"
+
+#define YYDEBUG 1
+
+void yyerror(std::string s) {
+    std::cerr << s << std::endl;
+    exit(EXIT_FAILURE);
+}
+
+
+extern int yylex();
+
+std::map<std::string, double> Promenljive;
+
+%}
+
+%union {
+    std::string* str;
+    Izraz* izr;
+    Naredba* nar;
+    double br;
+    std::vector<Naredba*>* naredbe;
+}
+
+%token <br> num_token
+%token <str> id_token
+%token print_token read_token if_token while_token and_token or_token not_token
+%token else_token end_token jednako_token nejednako_token do_token than_token
+
+%type <nar> Naredba
+%type <izr> E
+%type <naredbe> NizNaredbi
+
+%left if_token else_token
+%left or_token
+%left and_token
+%left not_token
+%left '<' '>' jednako_token nejednako_token
+%left '+' '-'
+%left '*' '/'
+%left UMINUS '('  ')' do_token while_token
+
+%%
+Program : NizNaredbi {
+		Promenljive.clear();
+		for (auto & naredba : *$1)
+			naredba->interpretacija();
+	}
+;
+
+/* Naredbe u jeziku Lua mogu i ne moraju da se zavrsavaju sa ; */
+NizNaredbi: NizNaredbi Naredba '\n'{
+    $$ = $1;
+    $$->push_back($2);
+	} 
+| Naredba '\n' {
+    $$ = new std::vector<Naredba*>();
+    $$->push_back($1);
+	}
+| NizNaredbi Naredba ';' {
+		$$ = $1;
+		$$->push_back($2);
+	}
+| Naredba ';' {
+		$$ = new std::vector<Naredba*>();
+		$$->push_back($1);
+	}
+;
+
+Naredba: id_token '=' E {
+    $$ = new Dodela(*$1, $3);
+		delete $1;
+	} 
+| print_token '(' E ')' {
+    $$ = new Ispis($3);
+	} 
+| if_token '(' E ')' than_token NizNaredbi else_token NizNaredbi end_token {
+    $$ = new IfThenElse($3, new Blok(*$6), new Blok(*$8));
+    delete $6;
+	} 
+| if_token '(' E ')' than_token NizNaredbi end_token {
+    $$ = new IfThenElse($3, new Blok(*$6), nullptr);
+    delete $6;
+	} 
+| while_token '(' E ')' do_token NizNaredbi end_token {
+    $$ = new While($3, new Blok(*$6));
+	}  
+| E {
+    $$ = new NaredbaIzraz($1);
+	}
+| {
+		//prazne naredbe postoje da bi mogli da imamo prazne redove
+		$$ = new PraznaNaredba();
+	}
+;
+
+E: E '+' E {
+    $$ = new Sabiranje($1, $3);
+	} 
+| E '-' E {
+    $$ = new Oduzimanje($1, $3);
+	} 
+| E '*' E {
+    $$ = new Mnozenje($1, $3);
+	} 
+| E '/' E {
+    $$ = new Deljenje($1, $3);
+	} 
+| E '>' E {
+    $$ = new Vece($1, $3);
+	} 
+| E jednako_token E {
+    $$ = new Jednako($1, $3);
+	} 
+| E nejednako_token E {
+    $$ = new Razlicito($1, $3);
+	} 
+| E '<' E {
+    $$ = new Manje($1, $3);
+	} 
+| '(' E ')' {
+    $$ = $2;
+	} 
+| '-' E %prec UMINUS {
+    $$ = new UnMinus($2, new Broj(-1.0));
+	} 
+| num_token {
+    $$ = new Broj($1);
+	} 
+| id_token {
+    $$ = new Promenljiva(*$1);
+    delete $1;
+	} 
+| read_token '(' ')' {
+    $$ = new Unos();
+	}
+| E and_token E {
+		$$ = new LogickoI($1, $3);
+	}
+| E or_token E {
+		$$ = new LogickoIli($1, $3);
+	}
+| not_token E {
+		$$ = new Negacija($2);
+	}
+;
+%%
+
+extern FILE* yyin;
+
+int main(int argc, char** argv) {
+/*       yydebug = 1; */
+
+    if(argc == 2) {
+			yyin = fopen(argv[1], "r");
+			if(yyin == NULL) {
+				std::cout << "Neuspelo otvaranje ulaznog fajla sa adrese: '" << argv[1] << "'" << std::endl;
+				exit(EXIT_FAILURE);
+			}
+    }
+
+    yyparse();
+    return 0;
+}
